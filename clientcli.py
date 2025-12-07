@@ -1,6 +1,7 @@
 import socket
 import json
 import hashlib
+import ast
 from certificate_authority import *
 from ecc import *
 import threading
@@ -79,7 +80,8 @@ class Client:
         self.client_socket.send(self.client_certificate.cert_bytes())
 
 
-        data = eval(self.client_socket.recv(5000).decode())
+        data_raw = self.client_socket.recv(5000)
+        data = ast.literal_eval(data_raw.decode())
         if not verify_message(server_public_key, data):
             print("[-] Server message verification failed!")
             self.client_socket.close()
@@ -106,12 +108,14 @@ class Client:
                     if not response:
                         break
 
-                    if not verify_message(server_public_key, eval(response.decode())):
+                    parsed = ast.literal_eval(response.decode())
+                    if not verify_message(server_public_key, parsed):
                         print("[-] Server message verification failed!")
                         self.client_socket.close()
                         return
 
-                    decrypted_message = xor_encrypt_decrypt(eval(response.decode())['message'], str(self.shared_secret)).decode()
+                    decrypted_bytes = xor_encrypt_decrypt(parsed['message'], str(self.shared_secret))
+                    decrypted_message = decrypted_bytes.decode(errors='ignore')
                     print(decrypted_message)
             except Exception as e:
                 print(f"[!] Error receiving message: {e}")
@@ -124,7 +128,8 @@ class Client:
                 if message.lower() == 'exit':
                     break
 
-                encrypted_message = xor_encrypt_decrypt(message, str(self.shared_secret)).decode()
+                encrypted_bytes = xor_encrypt_decrypt(message, str(self.shared_secret))
+                encrypted_message = encrypted_bytes.decode(errors='ignore')
                 self.client_socket.send(str(create_signed_message(PrivateKey(client_key), encrypted_message)).encode())
 
         except Exception as e:

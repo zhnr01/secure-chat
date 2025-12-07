@@ -2,6 +2,7 @@ import socket
 import threading
 import json
 import hashlib
+import ast
 from certificate_authority import *
 from ecc import *
 import random
@@ -59,7 +60,8 @@ class Server:
         for client_socket, _, client_shared_secret in connected_clients:
             if client_socket != sender_socket:
                 try:
-                    encrypted_message = xor_encrypt_decrypt(message, str(client_shared_secret)).decode()
+                    encrypted_bytes = xor_encrypt_decrypt(message, str(client_shared_secret))
+                    encrypted_message = encrypted_bytes.decode(errors='ignore')
                     client_socket.send(str(create_signed_message(PrivateKey(server_key), encrypted_message)).encode())
                 except:
                     pass
@@ -71,7 +73,8 @@ class Server:
         try:
             client_socket.send(self.server_certificate.cert_bytes())
 
-            client_cert_data = json.loads(client_socket.recv(5000).decode())
+            client_cert_raw = client_socket.recv(5000)
+            client_cert_data = json.loads(client_cert_raw.decode())
             client_certificate = Certificate(client_cert_data['cert_data'], Signature(
                 r=eval(client_cert_data['signature']['r']),
                 s=eval(client_cert_data['signature']['s'])
@@ -99,7 +102,8 @@ class Server:
             encoded_msg = create_signed_message(PrivateKey(server_key), key_generated)
             client_socket.send(str(encoded_msg).encode())
 
-            data = eval(client_socket.recv(5000).decode())
+            data_raw = client_socket.recv(5000)
+            data = ast.literal_eval(data_raw.decode())
 
             if not verify_message(client_public_key, data):
                 print("[-] Client message verification failed!")
@@ -116,12 +120,14 @@ class Server:
                 if not encrypted_message:
                     break
                 
-                if not verify_message(client_public_key, eval(encrypted_message.decode())):
+                parsed = ast.literal_eval(encrypted_message.decode())
+                if not verify_message(client_public_key, parsed):
                     print(f"[-] Client {client_address} message verification failed!")
                     client_socket.close()
                     return
 
-                decrypted_message = xor_encrypt_decrypt(eval(encrypted_message.decode())['message'], str(shared_secret)).decode()
+                decrypted_bytes = xor_encrypt_decrypt(parsed['message'], str(shared_secret))
+                decrypted_message = decrypted_bytes.decode(errors='ignore')
 
                 print(f"[{client_address}] {decrypted_message}")
 
@@ -135,7 +141,11 @@ class Server:
         finally:
             print(f"[-] Disconnected: {client_address}")
             client_socket.close()
-            connected_clients.remove((client_socket, client_address))
+            # Safely remove client entry if present
+            for idx, (sock, addr, _) in enumerate(list(connected_clients)):
+                if sock == client_socket and addr == client_address:
+                    connected_clients.pop(idx)
+                    break
 
     def start(self):
         print("[+] Server ready for connections...")

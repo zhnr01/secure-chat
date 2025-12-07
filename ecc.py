@@ -97,7 +97,6 @@ class Point:
         if other.x is None:
             return self
         if self.x == other.x and self.y != other.y:
-            print('Got the inverse points {} {}'.format(self, other))
             return self.__class__(None, None, self.a, self.b)
         if self.x != other.x:
             s = (other.y - self.y) / (other.x - self.x)
