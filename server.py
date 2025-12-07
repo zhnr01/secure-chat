@@ -1,7 +1,6 @@
 import socket
 import threading
 import json
-import hashlib
 import ast
 import random
 from config import HOST, PORT, BACKLOG, RECV_BYTES, SERVER_PRIVATE_KEY_INT, P_FIELD, G_GENERATOR_NUM, XOR_ENCODING
@@ -12,36 +11,6 @@ from ecc import *
 server_key = SERVER_PRIVATE_KEY_INT
 
 connected_clients = []
-
-
-def verify_message(pub_key: S256Point, message_data: dict):
-    z = hash_message(message_data['message'])
-    sig = Signature(message_data['r'], message_data['s'])
-    return pub_key.verify(z, sig)
-
-
-def xor_encrypt_decrypt(data, key):
-    if isinstance(data, str):
-        data = data.encode()
-    if isinstance(key, str):
-        key = key.encode()
-
-    key_length = len(key)
-    return bytes([data[i] ^ key[i % key_length] for i in range(len(data))])
-
-def hash_message(msg):
-    if isinstance(msg, int):
-        msg_bytes = msg.to_bytes(32, 'big')
-    elif isinstance(msg, str):
-        msg_bytes = msg.encode()
-    else:
-        raise TypeError("Message must be int or str")
-    return int.from_bytes(hashlib.sha256(msg_bytes).digest(), 'big')
-
-def create_signed_message(private_key: PrivateKey, message: str):
-    z = hash_message(message)
-    signature = private_key.sign(z)
-    return {'message': message, 'r': signature.r, 's': signature.s}
 
 
 class Server:
@@ -143,7 +112,6 @@ class Server:
         finally:
             print(f"[-] Disconnected: {client_address}")
             client_socket.close()
-            # Safely remove client entry if present
             for idx, (sock, addr, _) in enumerate(list(connected_clients)):
                 if sock == client_socket and addr == client_address:
                     connected_clients.pop(idx)
