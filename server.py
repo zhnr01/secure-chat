@@ -3,10 +3,13 @@ import threading
 import json
 import ast
 import random
+import argparse
+import logging
 from config import HOST, PORT, BACKLOG, RECV_BYTES, SERVER_PRIVATE_KEY_INT, P_FIELD, G_GENERATOR_NUM, XOR_ENCODING
 from utils import xor_encrypt_decrypt, create_signed_message, verify_message
 from certificate_authority import *
 from ecc import *
+from logging_util import setup_logger
 
 server_key = SERVER_PRIVATE_KEY_INT
 
@@ -17,6 +20,7 @@ class Server:
     def __init__(self, host=HOST, port=PORT):
         self.host = host
         self.port = port
+        self.logger = setup_logger("server")
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(BACKLOG)
@@ -25,7 +29,7 @@ class Server:
         self.server_private_key_wrapper = self.cert_authority.get_private_key_wrapper()
         self.server_certificate = Certificate.load('server_certificate.pem')
 
-        print(f"[+] Server started on {self.host}:{self.port}")
+        self.logger.info(f"Server started on {self.host}:{self.port}")
 
     def broadcast(self, sender_socket, message):
         for client_socket, _, client_shared_secret in connected_clients:
@@ -39,7 +43,7 @@ class Server:
     
 
     def handle_client(self, client_socket, client_address):
-        print(f"[+] New connection from {client_address}")
+        self.logger.info(f"New connection from {client_address}")
 
         try:
             client_socket.send(self.server_certificate.cert_bytes())
@@ -53,7 +57,7 @@ class Server:
 
             ca_private_key = PrivateKeyWrapper.load('ca_private.pem')
             if not client_certificate.verify(ca_private_key.point):
-                print(f"[-] Certificate verification failed for {client_address}")
+                self.logger.warning(f"Certificate verification failed for {client_address}")
                 client_socket.close()
                 return
             
@@ -64,7 +68,7 @@ class Server:
                 eval(client_public_key_y)
             )
 
-            print(f"[+] Client {client_address} certificate verified.")
+            self.logger.info(f"Client {client_address} certificate verified.")
 
             p = P_FIELD
             G_num = G_GENERATOR_NUM
@@ -77,12 +81,12 @@ class Server:
             data = ast.literal_eval(data_raw.decode())
 
             if not verify_message(client_public_key, data):
-                print("[-] Client message verification failed!")
+                self.logger.warning("Client message verification failed!")
                 client_socket.close()
                 return
             
             shared_secret = pow(data['message'], encryption_private_key, p)
-            print(f"[+] Shared secret established with {client_address}")
+            self.logger.info(f"Shared secret established with {client_address}")
 
             connected_clients.append((client_socket, client_address, shared_secret))
 
@@ -93,24 +97,24 @@ class Server:
                 
                 parsed = ast.literal_eval(encrypted_message.decode())
                 if not verify_message(client_public_key, parsed):
-                    print(f"[-] Client {client_address} message verification failed!")
+                    self.logger.warning(f"Client {client_address} message verification failed!")
                     client_socket.close()
                     return
 
                 decrypted_bytes = xor_encrypt_decrypt(parsed['message'], str(shared_secret))
                 decrypted_message = decrypted_bytes.decode(errors=XOR_ENCODING)
 
-                print(f"[{client_address}] {decrypted_message}")
+                self.logger.info(f"[{client_address}] {decrypted_message}")
 
                 broadcast_message = f"[{client_address}] {decrypted_message}"
 
                 self.broadcast(client_socket, broadcast_message)
 
         except Exception as e:
-            print(f"[!] Error with {client_address}: {e}")
+            self.logger.exception(f"Error with {client_address}: {e}")
 
         finally:
-            print(f"[-] Disconnected: {client_address}")
+            self.logger.info(f"Disconnected: {client_address}")
             client_socket.close()
             for idx, (sock, addr, _) in enumerate(list(connected_clients)):
                 if sock == client_socket and addr == client_address:
@@ -118,12 +122,20 @@ class Server:
                     break
 
     def start(self):
-        print("[+] Server ready for connections...")
+        self.logger.info("Server ready for connections...")
         while True:
             client_socket, client_address = self.server_socket.accept()
             threading.Thread(target=self.handle_client, args=(client_socket, client_address), daemon=True).start()
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Secure Chat Server")
+    parser.add_argument("--host", default=HOST, help="Host to bind")
+    parser.add_argument("--port", type=int, default=PORT, help="Port to listen on")
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    server = Server()
+    args = parse_args()
+    server = Server(host=args.host, port=args.port)
     server.start()
