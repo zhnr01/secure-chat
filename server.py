@@ -3,11 +3,13 @@ import threading
 import json
 import hashlib
 import ast
+import random
+from config import HOST, PORT, BACKLOG, RECV_BYTES, SERVER_PRIVATE_KEY_INT, P_FIELD, G_GENERATOR_NUM, XOR_ENCODING
+from utils import xor_encrypt_decrypt, create_signed_message, verify_message
 from certificate_authority import *
 from ecc import *
-import random
 
-server_key = 15868289705152457917503632020531026166612756857419825123766511006865265396897
+server_key = SERVER_PRIVATE_KEY_INT
 
 connected_clients = []
 
@@ -43,12 +45,12 @@ def create_signed_message(private_key: PrivateKey, message: str):
 
 
 class Server:
-    def __init__(self, host='localhost', port=8080):
+    def __init__(self, host=HOST, port=PORT):
         self.host = host
         self.port = port
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.bind((self.host, self.port))
-        self.server_socket.listen(10)
+        self.server_socket.listen(BACKLOG)
 
         self.cert_authority = CertificateAuthority()
         self.server_private_key_wrapper = self.cert_authority.get_private_key_wrapper()
@@ -73,7 +75,7 @@ class Server:
         try:
             client_socket.send(self.server_certificate.cert_bytes())
 
-            client_cert_raw = client_socket.recv(5000)
+            client_cert_raw = client_socket.recv(RECV_BYTES)
             client_cert_data = json.loads(client_cert_raw.decode())
             client_certificate = Certificate(client_cert_data['cert_data'], Signature(
                 r=eval(client_cert_data['signature']['r']),
@@ -95,14 +97,14 @@ class Server:
 
             print(f"[+] Client {client_address} certificate verified.")
 
-            p = 2**256 - 2**32 - 977
-            G = FieldElement(20039604507154726964694453930606668883942751177735706227159751703972799940977, p)
-            encryption_private_key = FieldElement(random.randint(1, p - 1), p)
-            key_generated = pow(G.num, encryption_private_key.num, p)
+            p = P_FIELD
+            G_num = G_GENERATOR_NUM
+            encryption_private_key = random.randint(1, p - 1)
+            key_generated = pow(G_num, encryption_private_key, p)
             encoded_msg = create_signed_message(PrivateKey(server_key), key_generated)
             client_socket.send(str(encoded_msg).encode())
 
-            data_raw = client_socket.recv(5000)
+            data_raw = client_socket.recv(RECV_BYTES)
             data = ast.literal_eval(data_raw.decode())
 
             if not verify_message(client_public_key, data):
@@ -110,7 +112,7 @@ class Server:
                 client_socket.close()
                 return
             
-            shared_secret = pow(data['message'], encryption_private_key.num, p)
+            shared_secret = pow(data['message'], encryption_private_key, p)
             print(f"[+] Shared secret established with {client_address}")
 
             connected_clients.append((client_socket, client_address, shared_secret))
@@ -127,7 +129,7 @@ class Server:
                     return
 
                 decrypted_bytes = xor_encrypt_decrypt(parsed['message'], str(shared_secret))
-                decrypted_message = decrypted_bytes.decode(errors='ignore')
+                decrypted_message = decrypted_bytes.decode(errors=XOR_ENCODING)
 
                 print(f"[{client_address}] {decrypted_message}")
 
