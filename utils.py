@@ -5,6 +5,17 @@ import hashlib
 from typing import Union
 
 from ecc import PrivateKey, Signature, S256Point
+import json
+
+
+def parse_certificate_bytes(cert_bytes: bytes) -> dict:
+    return json.loads(cert_bytes.decode())
+
+
+def reconstruct_certificate(cert_dict: dict):
+    from certificate_authority import Certificate
+    sig = Signature(r=eval(cert_dict['signature']['r']), s=eval(cert_dict['signature']['s']))
+    return Certificate(cert_dict['cert_data'], sig)
 
 
 def xor_encrypt_decrypt(data: Union[str, bytes], key: Union[str, bytes]) -> bytes:

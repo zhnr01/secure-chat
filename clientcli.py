@@ -5,7 +5,7 @@ import threading
 import random
 import argparse
 from config import HOST, PORT, RECV_BYTES, CLIENT_PRIVATE_KEY_INT, P_FIELD, G_GENERATOR_NUM, XOR_ENCODING
-from utils import xor_encrypt_decrypt, create_signed_message, verify_message
+from utils import xor_encrypt_decrypt, create_signed_message, verify_message, parse_certificate_bytes, reconstruct_certificate
 from certificate_authority import *
 from ecc import *
 from logging_util import setup_logger
@@ -29,14 +29,8 @@ class Client:
 
     def exchange_certificates(self):
         global server_public_key
-        server_cert_data = json.loads(self.client_socket.recv(RECV_BYTES).decode())
-        server_certificate = Certificate(
-            server_cert_data['cert_data'],
-            Signature(
-                r=eval(server_cert_data['signature']['r']),
-                s=eval(server_cert_data['signature']['s'])
-            )
-        )
+        server_cert_data = parse_certificate_bytes(self.client_socket.recv(RECV_BYTES))
+        server_certificate = reconstruct_certificate(server_cert_data)
 
         ca_private_key = PrivateKeyWrapper.load('ca_private.pem')
 

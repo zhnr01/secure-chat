@@ -6,7 +6,7 @@ import random
 import argparse
 import logging
 from config import HOST, PORT, BACKLOG, RECV_BYTES, SERVER_PRIVATE_KEY_INT, P_FIELD, G_GENERATOR_NUM, XOR_ENCODING
-from utils import xor_encrypt_decrypt, create_signed_message, verify_message
+from utils import xor_encrypt_decrypt, create_signed_message, verify_message, parse_certificate_bytes, reconstruct_certificate
 from certificate_authority import *
 from ecc import *
 from logging_util import setup_logger
@@ -49,11 +49,8 @@ class Server:
             client_socket.send(self.server_certificate.cert_bytes())
 
             client_cert_raw = client_socket.recv(RECV_BYTES)
-            client_cert_data = json.loads(client_cert_raw.decode())
-            client_certificate = Certificate(client_cert_data['cert_data'], Signature(
-                r=eval(client_cert_data['signature']['r']),
-                s=eval(client_cert_data['signature']['s'])
-            ))
+            client_cert_data = parse_certificate_bytes(client_cert_raw)
+            client_certificate = reconstruct_certificate(client_cert_data)
 
             ca_private_key = PrivateKeyWrapper.load('ca_private.pem')
             if not client_certificate.verify(ca_private_key.point):
