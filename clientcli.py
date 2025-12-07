@@ -2,12 +2,14 @@ import socket
 import json
 import hashlib
 import ast
-from certificate_authority import *
-from ecc import *
 import threading
 import random
+from config import HOST, PORT, RECV_BYTES, CLIENT_PRIVATE_KEY_INT, P_FIELD, G_GENERATOR_NUM, XOR_ENCODING
+from utils import xor_encrypt_decrypt, create_signed_message, verify_message
+from certificate_authority import *
+from ecc import *
 
-client_key = 9957016483416681782736782534500483090238740989288695810619470189709094021823
+client_key = CLIENT_PRIVATE_KEY_INT
 server_public_key = ''
 
 def verify_message(pub_key: S256Point, message_data: dict):
@@ -41,7 +43,7 @@ def create_signed_message(private_key: PrivateKey, message: str):
 
 
 class Client:
-    def __init__(self, host='localhost', port=8080):
+    def __init__(self, host=HOST, port=PORT):
         self.host = host
         self.port = port
         self.cert_authority = CertificateAuthority()
@@ -55,7 +57,7 @@ class Client:
 
     def exchange_certificates(self):
         global server_public_key
-        server_cert_data = json.loads(self.client_socket.recv(5000).decode())
+        server_cert_data = json.loads(self.client_socket.recv(RECV_BYTES).decode())
         server_certificate = Certificate(
             server_cert_data['cert_data'],
             Signature(
@@ -80,7 +82,7 @@ class Client:
         self.client_socket.send(self.client_certificate.cert_bytes())
 
 
-        data_raw = self.client_socket.recv(5000)
+        data_raw = self.client_socket.recv(RECV_BYTES)
         data = ast.literal_eval(data_raw.decode())
         if not verify_message(server_public_key, data):
             print("[-] Server message verification failed!")
@@ -88,14 +90,14 @@ class Client:
             return
         server_key_generated = data['message']
 
-        p = 23
-        G = FieldElement(5, p)
-        encryption_private_key = FieldElement(random.randint(1, p - 1), p)
-        key_generated = pow(G.num, encryption_private_key.num, p)
+        p = P_FIELD
+        G_num = G_GENERATOR_NUM
+        encryption_private_key = random.randint(1, p - 1)
+        key_generated = pow(G_num, encryption_private_key, p)
 
         self.client_socket.send(str(create_signed_message(PrivateKey(client_key), key_generated)).encode())
 
-        self.shared_secret = pow(server_key_generated, encryption_private_key.num, p)
+        self.shared_secret = pow(server_key_generated, encryption_private_key, p)
 
         print("[+] Shared secret established with server.")
 
@@ -104,7 +106,7 @@ class Client:
         def receive_messages():
             try:
                 while True:
-                    response = self.client_socket.recv(1024)
+                    response = self.client_socket.recv(RECV_BYTES)
                     if not response:
                         break
 
@@ -115,7 +117,7 @@ class Client:
                         return
 
                     decrypted_bytes = xor_encrypt_decrypt(parsed['message'], str(self.shared_secret))
-                    decrypted_message = decrypted_bytes.decode(errors='ignore')
+                    decrypted_message = decrypted_bytes.decode(errors=XOR_ENCODING)
                     print(decrypted_message)
             except Exception as e:
                 print(f"[!] Error receiving message: {e}")
@@ -129,7 +131,7 @@ class Client:
                     break
 
                 encrypted_bytes = xor_encrypt_decrypt(message, str(self.shared_secret))
-                encrypted_message = encrypted_bytes.decode(errors='ignore')
+                encrypted_message = encrypted_bytes.decode(errors=XOR_ENCODING)
                 self.client_socket.send(str(create_signed_message(PrivateKey(client_key), encrypted_message)).encode())
 
         except Exception as e:
