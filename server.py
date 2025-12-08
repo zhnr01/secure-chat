@@ -9,6 +9,7 @@ from config import HOST, PORT, BACKLOG, RECV_BYTES, SERVER_PRIVATE_KEY_INT, P_FI
 from utils import xor_encrypt_decrypt, create_signed_message, verify_message, parse_certificate_bytes, reconstruct_certificate
 from messages import SignedMessage
 from protocol import send_json, recv_json
+from key_exchange import KeyExchange
 from certificate_authority import *
 from ecc import *
 from logging_util import setup_logger
@@ -68,10 +69,8 @@ class Server:
 
             self.logger.info(f"Client {client_address} certificate verified.")
 
-            p = P_FIELD
-            G_num = G_GENERATOR_NUM
-            encryption_private_key = random.randint(1, p - 1)
-            key_generated = pow(G_num, encryption_private_key, p)
+            kx = KeyExchange()
+            key_generated = kx.public_component()
             encoded = create_signed_message(PrivateKey(server_key), key_generated)
             send_json(client_socket, encoded)
 
@@ -82,7 +81,7 @@ class Server:
                 client_socket.close()
                 return
             
-            shared_secret = pow(data['message'], encryption_private_key, p)
+            shared_secret = kx.derive_shared(data['message'])
             self.logger.info(f"Shared secret established with {client_address}")
 
             connected_clients.append((client_socket, client_address, shared_secret))
