@@ -7,6 +7,7 @@ import argparse
 from config import HOST, PORT, RECV_BYTES, CLIENT_PRIVATE_KEY_INT, P_FIELD, G_GENERATOR_NUM, XOR_ENCODING
 from utils import xor_encrypt_decrypt, create_signed_message, verify_message, parse_certificate_bytes, reconstruct_certificate
 from messages import SignedMessage
+from protocol import send_json, recv_json
 from certificate_authority import *
 from ecc import *
 from logging_util import setup_logger
@@ -30,7 +31,7 @@ class Client:
 
     def exchange_certificates(self):
         global server_public_key
-        server_cert_data = parse_certificate_bytes(self.client_socket.recv(RECV_BYTES))
+        server_cert_data = recv_json(self.client_socket)
         server_certificate = reconstruct_certificate(server_cert_data)
 
         ca_private_key = PrivateKeyWrapper.load('ca_private.pem')
@@ -49,8 +50,7 @@ class Client:
         self.client_socket.send(self.client_certificate.cert_bytes())
 
 
-        data_raw = self.client_socket.recv(RECV_BYTES)
-        data = json.loads(data_raw.decode())
+        data = recv_json(self.client_socket)
         if not verify_message(server_public_key, data):
             self.logger.warning("Server message verification failed!")
             self.client_socket.close()
@@ -62,7 +62,7 @@ class Client:
         encryption_private_key = random.randint(1, p - 1)
         key_generated = pow(G_num, encryption_private_key, p)
 
-        self.client_socket.send(json.dumps(create_signed_message(PrivateKey(client_key), key_generated)).encode())
+        send_json(self.client_socket, create_signed_message(PrivateKey(client_key), key_generated))
 
         self.shared_secret = pow(server_key_generated, encryption_private_key, p)
 
@@ -73,11 +73,11 @@ class Client:
         def receive_messages():
             try:
                 while True:
-                    response = self.client_socket.recv(RECV_BYTES)
+                    response = recv_json(self.client_socket)
                     if not response:
                         break
 
-                    parsed = json.loads(response.decode())
+                    parsed = response
                     if not verify_message(server_public_key, parsed):
                         self.logger.warning("Server message verification failed!")
                         self.client_socket.close()
@@ -99,7 +99,7 @@ class Client:
 
                 encrypted_bytes = xor_encrypt_decrypt(message, str(self.shared_secret))
                 encrypted_message = encrypted_bytes.decode(errors=XOR_ENCODING)
-                self.client_socket.send(json.dumps(create_signed_message(PrivateKey(client_key), encrypted_message)).encode())
+                send_json(self.client_socket, create_signed_message(PrivateKey(client_key), encrypted_message))
 
         except Exception as e:
             self.logger.exception(f"Error: {e}")

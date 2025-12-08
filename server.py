@@ -8,6 +8,7 @@ import logging
 from config import HOST, PORT, BACKLOG, RECV_BYTES, SERVER_PRIVATE_KEY_INT, P_FIELD, G_GENERATOR_NUM, XOR_ENCODING
 from utils import xor_encrypt_decrypt, create_signed_message, verify_message, parse_certificate_bytes, reconstruct_certificate
 from messages import SignedMessage
+from protocol import send_json, recv_json
 from certificate_authority import *
 from ecc import *
 from logging_util import setup_logger
@@ -49,8 +50,7 @@ class Server:
         try:
             client_socket.send(self.server_certificate.cert_bytes())
 
-            client_cert_raw = client_socket.recv(RECV_BYTES)
-            client_cert_data = parse_certificate_bytes(client_cert_raw)
+            client_cert_data = recv_json(client_socket)
             client_certificate = reconstruct_certificate(client_cert_data)
 
             ca_private_key = PrivateKeyWrapper.load('ca_private.pem')
@@ -73,10 +73,9 @@ class Server:
             encryption_private_key = random.randint(1, p - 1)
             key_generated = pow(G_num, encryption_private_key, p)
             encoded = create_signed_message(PrivateKey(server_key), key_generated)
-            client_socket.send(json.dumps(encoded).encode())
+            send_json(client_socket, encoded)
 
-            data_raw = client_socket.recv(RECV_BYTES)
-            data = json.loads(data_raw.decode())
+            data = recv_json(client_socket)
 
             if not verify_message(client_public_key, data):
                 self.logger.warning("Client message verification failed!")
@@ -89,11 +88,11 @@ class Server:
             connected_clients.append((client_socket, client_address, shared_secret))
 
             while True:
-                encrypted_message = client_socket.recv(RECV_BYTES)
+                encrypted_message = recv_json(client_socket)
                 if not encrypted_message:
                     break
                 
-                parsed = json.loads(encrypted_message.decode())
+                parsed = encrypted_message
                 if not verify_message(client_public_key, parsed):
                     self.logger.warning(f"Client {client_address} message verification failed!")
                     client_socket.close()
