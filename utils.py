@@ -40,7 +40,9 @@ def hash_message(msg: Union[int, str]) -> int:
 def create_signed_message(private_key: PrivateKey, message: Union[str, int]) -> dict:
     z = hash_message(message)
     signature = private_key.sign(z)
-    return {'message': message, 'r': signature.r, 's': signature.s}
+    # Normalize message to str for transport
+    msg_str = str(message)
+    return {'message': msg_str, 'r': signature.r, 's': signature.s}
 
 
 def verify_message(pub_key: S256Point, message_data: dict) -> bool:

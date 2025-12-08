@@ -7,6 +7,7 @@ import argparse
 import logging
 from config import HOST, PORT, BACKLOG, RECV_BYTES, SERVER_PRIVATE_KEY_INT, P_FIELD, G_GENERATOR_NUM, XOR_ENCODING
 from utils import xor_encrypt_decrypt, create_signed_message, verify_message, parse_certificate_bytes, reconstruct_certificate
+from messages import SignedMessage
 from certificate_authority import *
 from ecc import *
 from logging_util import setup_logger
@@ -71,11 +72,11 @@ class Server:
             G_num = G_GENERATOR_NUM
             encryption_private_key = random.randint(1, p - 1)
             key_generated = pow(G_num, encryption_private_key, p)
-            encoded_msg = create_signed_message(PrivateKey(server_key), key_generated)
-            client_socket.send(str(encoded_msg).encode())
+            encoded = create_signed_message(PrivateKey(server_key), key_generated)
+            client_socket.send(json.dumps(encoded).encode())
 
             data_raw = client_socket.recv(RECV_BYTES)
-            data = ast.literal_eval(data_raw.decode())
+            data = json.loads(data_raw.decode())
 
             if not verify_message(client_public_key, data):
                 self.logger.warning("Client message verification failed!")
@@ -88,11 +89,11 @@ class Server:
             connected_clients.append((client_socket, client_address, shared_secret))
 
             while True:
-                encrypted_message = client_socket.recv(5000)
+                encrypted_message = client_socket.recv(RECV_BYTES)
                 if not encrypted_message:
                     break
                 
-                parsed = ast.literal_eval(encrypted_message.decode())
+                parsed = json.loads(encrypted_message.decode())
                 if not verify_message(client_public_key, parsed):
                     self.logger.warning(f"Client {client_address} message verification failed!")
                     client_socket.close()

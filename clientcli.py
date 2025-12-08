@@ -6,6 +6,7 @@ import random
 import argparse
 from config import HOST, PORT, RECV_BYTES, CLIENT_PRIVATE_KEY_INT, P_FIELD, G_GENERATOR_NUM, XOR_ENCODING
 from utils import xor_encrypt_decrypt, create_signed_message, verify_message, parse_certificate_bytes, reconstruct_certificate
+from messages import SignedMessage
 from certificate_authority import *
 from ecc import *
 from logging_util import setup_logger
@@ -49,7 +50,7 @@ class Client:
 
 
         data_raw = self.client_socket.recv(RECV_BYTES)
-        data = ast.literal_eval(data_raw.decode())
+        data = json.loads(data_raw.decode())
         if not verify_message(server_public_key, data):
             self.logger.warning("Server message verification failed!")
             self.client_socket.close()
@@ -61,7 +62,7 @@ class Client:
         encryption_private_key = random.randint(1, p - 1)
         key_generated = pow(G_num, encryption_private_key, p)
 
-        self.client_socket.send(str(create_signed_message(PrivateKey(client_key), key_generated)).encode())
+        self.client_socket.send(json.dumps(create_signed_message(PrivateKey(client_key), key_generated)).encode())
 
         self.shared_secret = pow(server_key_generated, encryption_private_key, p)
 
@@ -76,7 +77,7 @@ class Client:
                     if not response:
                         break
 
-                    parsed = ast.literal_eval(response.decode())
+                    parsed = json.loads(response.decode())
                     if not verify_message(server_public_key, parsed):
                         self.logger.warning("Server message verification failed!")
                         self.client_socket.close()
@@ -98,7 +99,7 @@ class Client:
 
                 encrypted_bytes = xor_encrypt_decrypt(message, str(self.shared_secret))
                 encrypted_message = encrypted_bytes.decode(errors=XOR_ENCODING)
-                self.client_socket.send(str(create_signed_message(PrivateKey(client_key), encrypted_message)).encode())
+                self.client_socket.send(json.dumps(create_signed_message(PrivateKey(client_key), encrypted_message)).encode())
 
         except Exception as e:
             self.logger.exception(f"Error: {e}")
