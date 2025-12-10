@@ -12,9 +12,17 @@ def parse_certificate_bytes(cert_bytes: bytes) -> dict:
     return json.loads(cert_bytes.decode())
 
 
+def extract_public_key(cert_data: dict):
+    from ecc import S256Point
+    return S256Point(
+        int(cert_data['public_key_x'], 16),
+        int(cert_data['public_key_y'], 16)
+    )
+
+
 def reconstruct_certificate(cert_dict: dict):
     from certificate_authority import Certificate
-    sig = Signature(r=eval(cert_dict['signature']['r']), s=eval(cert_dict['signature']['s']))
+    sig = Signature(r=int(cert_dict['signature']['r'], 16), s=int(cert_dict['signature']['s'], 16))
     return Certificate(cert_dict['cert_data'], sig)
 
 
