@@ -3,7 +3,7 @@ import threading
 import json
 import argparse
 from config import HOST, PORT, BACKLOG, SERVER_PRIVATE_KEY_INT, XOR_ENCODING
-from utils import xor_encrypt_decrypt, create_signed_message, verify_message, parse_certificate_bytes, reconstruct_certificate
+from utils import xor_encrypt_decrypt, create_signed_message, verify_message, reconstruct_certificate, extract_public_key
 from messages import SignedMessage
 from protocol import send_json, recv_json
 from key_exchange import KeyExchange
@@ -57,12 +57,7 @@ class Server:
                 client_socket.close()
                 return
             
-            client_public_key_x = client_cert_data['cert_data']['public_key_x']
-            client_public_key_y = client_cert_data['cert_data']['public_key_y']
-            client_public_key = S256Point(
-                eval(client_public_key_x),
-                eval(client_public_key_y)
-            )
+            client_public_key = extract_public_key(client_cert_data['cert_data'])
 
             self.logger.info(f"Client {client_address} certificate verified.")
 

@@ -3,7 +3,7 @@ import json
 import threading
 import argparse
 from config import HOST, PORT, CLIENT_PRIVATE_KEY_INT, XOR_ENCODING
-from utils import xor_encrypt_decrypt, create_signed_message, verify_message, parse_certificate_bytes, reconstruct_certificate
+from utils import xor_encrypt_decrypt, create_signed_message, verify_message, reconstruct_certificate, extract_public_key
 from messages import SignedMessage
 from protocol import send_json, recv_json
 from key_exchange import KeyExchange
@@ -12,7 +12,7 @@ from ecc import *
 from logging_util import setup_logger
 
 client_key = CLIENT_PRIVATE_KEY_INT
-server_public_key = ''
+server_public_key = None
 
 class Client:
     def __init__(self, host=HOST, port=PORT):
@@ -35,10 +35,7 @@ class Client:
 
         ca_private_key = PrivateKeyWrapper.load('ca_private.pem')
 
-        server_public_key = S256Point(
-            eval(server_cert_data['cert_data']['public_key_x']),
-            eval(server_cert_data['cert_data']['public_key_y'])
-        )
+        server_public_key = extract_public_key(server_cert_data['cert_data'])
         if not server_certificate.verify(ca_private_key.point):
             self.logger.warning("Server certificate verification failed!")
             self.client_socket.close()
