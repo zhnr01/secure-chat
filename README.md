@@ -40,23 +40,24 @@ A Python-based chatroom application that uses **Elliptic Curve Cryptography (ECC
 ## 📁 File Structure
 
 ```
-
 project/
-│
 ├── server.py                  # Server code
 ├── clientcli.py               # CLI client
 ├── clientgui.py               # GUI client (PyQt5)
-│
+├── config.py                  # Central configuration (host, port, primes, keys)
+├── utils.py                   # Shared utilities (XOR, signing, cert parsing)
+├── protocol.py                # Length-prefixed JSON framing helpers
+├── key_exchange.py            # KeyExchange class for Diffie-Hellman
+├── messages.py                # SignedMessage dataclass
+├── logging_util.py            # Logging setup utility
 ├── ecc.py                     # ECC math (field, curve, signatures)
-├── certificate\_authority.py   # CA, certificate signing, PEM handling
-│
-├── ca\_private.pem             # Certificate Authority private key
-├── client\_certificate.pem     # Client certificate
-├── server\_certificate.pem     # Server certificate
-│
+├── certificate_authority.py   # CA, certificate signing, PEM handling
+├── ca_private.pem             # Certificate Authority private key
+├── client_certificate.pem     # Client certificate
+├── server_certificate.pem     # Server certificate
+├── requirements.txt           # Python dependencies
 └── README.md                  # You are here
-
-````
+```
 
 ## 📚 Based On
 
@@ -72,8 +73,28 @@ Parts of the ECC code, especially the `ecc.py` file, are based on the book:
 
 ## 🛠 Requirements
 
-- Python 3.8+
-- PyQt5 (`pip install pyqt5`)
+- Python 3.10+
+- PyQt5 (for GUI client)
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## ⚙️ Configuration
+
+All tunable parameters live in `config.py`:
+
+| Variable | Description |
+|----------|-------------|
+| `HOST` | Server bind address (default `localhost`) |
+| `PORT` | Server port (default `8080`) |
+| `RECV_BYTES` | Socket buffer size |
+| `P_FIELD` | DH prime modulus (secp256k1 field prime) |
+| `G_GENERATOR_NUM` | DH generator |
 
 ---
 
@@ -83,21 +104,17 @@ Parts of the ECC code, especially the `ecc.py` file, are based on the book:
 
 > If not already created:
 ```python
-# Run manually using certificate_authority.py
 from certificate_authority import CertificateAuthority, PrivateKeyWrapper
 
-# Create CA and server cert
 ca = CertificateAuthority()
 ca.get_private_key_wrapper().save('ca_private.pem')
 
-# Save server cert
 server_cert = ca.sign_certificate("Server", ca.public_key)
 server_cert.save('server_certificate.pem')
 
-# Create client cert
 client_cert = ca.sign_certificate("User", ca.public_key)
 client_cert.save('client_certificate.pem')
-````
+```
 
 ---
 
@@ -105,6 +122,8 @@ client_cert.save('client_certificate.pem')
 
 ```bash
 python server.py
+# Or with CLI overrides:
+python server.py --host 0.0.0.0 --port 9000
 ```
 
 ---
@@ -113,6 +132,8 @@ python server.py
 
 ```bash
 python clientcli.py
+# Or with CLI overrides:
+python clientcli.py --host 192.168.1.10 --port 9000
 ```
 
 ---
@@ -129,8 +150,19 @@ python clientgui.py
 
 * **ECC + ECDSA**: Custom implementation of signing and verification (see `ecc.py`).
 * **Certificates**: Manually signed by local CA (demo-style trust).
-* **Key Exchange**: Uses custom Diffie-Hellman with safe prime modulus.
+* **Key Exchange**: Uses `KeyExchange` class wrapping Diffie-Hellman with configurable prime.
+* **Protocol Framing**: Length-prefixed JSON messages via `protocol.py` prevent partial reads.
 * **Encryption**: Simple XOR used for demo purposes. For real-world apps, use AES or ChaCha20.
+
+---
+
+## 🧪 Running Tests
+
+A minimal round-trip test validates XOR, signing, verification, and DH:
+
+```bash
+python test_roundtrip.py
+```
 
 ---
 
