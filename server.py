@@ -1,11 +1,8 @@
 import socket
 import threading
 import json
-import ast
-import random
 import argparse
-import logging
-from config import HOST, PORT, BACKLOG, RECV_BYTES, SERVER_PRIVATE_KEY_INT, P_FIELD, G_GENERATOR_NUM, XOR_ENCODING
+from config import HOST, PORT, BACKLOG, SERVER_PRIVATE_KEY_INT, XOR_ENCODING
 from utils import xor_encrypt_decrypt, create_signed_message, verify_message, parse_certificate_bytes, reconstruct_certificate
 from messages import SignedMessage
 from protocol import send_json, recv_json
