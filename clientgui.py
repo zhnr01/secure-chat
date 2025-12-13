@@ -1,82 +1,63 @@
 import sys
 import json
-import hashlib
 import threading
-import random
 import socket
-
-from certificate_authority import *
-from ecc import *
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton,
     QTextEdit, QLineEdit, QLabel, QMessageBox, QHBoxLayout
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QObject
+from PyQt5.QtCore import pyqtSignal, QObject
 
-def xor_encrypt_decrypt(data, key):
-    if isinstance(data, str):
-        data = data.encode()
-    if isinstance(key, str):
-        key = key.encode()
-    key_length = len(key)
-    return bytes([data[i] ^ key[i % key_length] for i in range(len(data))])
+from config import HOST, PORT, CLIENT_PRIVATE_KEY_INT, XOR_ENCODING
+from utils import xor_encrypt_decrypt, create_signed_message, verify_message, reconstruct_certificate, extract_public_key
+from protocol import send_json, recv_json
+from key_exchange import KeyExchange
+from certificate_authority import Certificate, PrivateKeyWrapper, CertificateAuthority
+from ecc import PrivateKey
 
-def hash_message(msg):
-    if isinstance(msg, int):
-        msg_bytes = msg.to_bytes(32, 'big')
-    elif isinstance(msg, str):
-        msg_bytes = msg.encode()
-    else:
-        raise TypeError("Message must be int or str")
-    return int.from_bytes(hashlib.sha256(msg_bytes).digest(), 'big')
-
-def create_signed_message(private_key: PrivateKey, message: str):
-    z = hash_message(message)
-    signature = private_key.sign(z)
-    return {'message': message, 'r': signature.r, 's': signature.s}
-
-def verify_message(pub_key: S256Point, message_data: dict):
-    z = hash_message(message_data['message'])
-    sig = Signature(message_data['r'], message_data['s'])
-    return pub_key.verify(z, sig)
 
 class Communicator(QObject):
+    """Qt signal bridge for thread-safe UI updates."""
     message_received = pyqtSignal(str)
+    error_occurred = pyqtSignal(str)
+
 
 class ChatClient(QMainWindow):
+    """PyQt5 GUI client for secure chat."""
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Secure Chat Client")
         self.setGeometry(100, 100, 700, 500)
 
         self.comm = Communicator()
-        self.comm.message_received.connect(self.display_message)
+        self.comm.message_received.connect(self._display_message)
+        self.comm.error_occurred.connect(self._show_error)
 
-        self.client_key = 31580641622067585352553732580425217898746542081770544368011967812312526351079
+        self.client_key = CLIENT_PRIVATE_KEY_INT
         self.server_public_key = None
         self.shared_secret = None
 
         self.cert_authority = CertificateAuthority()
-        self.client_private_key_wrapper = self.cert_authority.get_private_key_wrapper()
         self.client_certificate = Certificate.load('client_certificate.pem')
         self.client_socket = None
 
-        self.init_ui()
+        self._init_ui()
 
-    def init_ui(self):
+    def _init_ui(self):
         self.chat_area = QTextEdit()
         self.chat_area.setReadOnly(True)
 
         self.message_input = QLineEdit()
         self.message_input.setPlaceholderText("Type your message...")
-        self.message_input.returnPressed.connect(self.send_message)
+        self.message_input.returnPressed.connect(self._send_message)
 
         self.send_button = QPushButton("Send")
         self.connect_button = QPushButton("Connect to Server")
 
-        self.send_button.clicked.connect(self.send_message)
-        self.connect_button.clicked.connect(self.start_connection)
+        self.send_button.clicked.connect(self._send_message)
+        self.connect_button.clicked.connect(self._start_connection)
 
         # Layouts
         top_bar = QHBoxLayout()
@@ -133,87 +114,85 @@ class ChatClient(QMainWindow):
             }
         """)
 
-    def start_connection(self):
-        threading.Thread(target=self.handle_connection, daemon=True).start()
+    def _start_connection(self):
+        """Start connection in background thread."""
+        threading.Thread(target=self._handle_connection, daemon=True).start()
 
-    def handle_connection(self):
+    def _handle_connection(self):
+        """Perform certificate exchange and key agreement."""
         try:
             self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.client_socket.connect(('localhost', 8080))
-            self.chat_area.append("[+] Connected to server.")
+            self.client_socket.connect((HOST, PORT))
+            self.comm.message_received.emit("[+] Connected to server.")
 
-            # Certificate exchange
-            server_cert_data = json.loads(self.client_socket.recv(5000).decode())
-            server_certificate = Certificate(
-                server_cert_data['cert_data'],
-                Signature(
-                    r=eval(server_cert_data['signature']['r']),
-                    s=eval(server_cert_data['signature']['s'])
-                )
-            )
+            # Receive and verify server certificate
+            server_cert_data = recv_json(self.client_socket)
+            server_certificate = reconstruct_certificate(server_cert_data)
+
             ca_private_key = PrivateKeyWrapper.load('ca_private.pem')
-            self.server_public_key = S256Point(
-                eval(server_cert_data['cert_data']['public_key_x']),
-                eval(server_cert_data['cert_data']['public_key_y'])
-            )
+            self.server_public_key = extract_public_key(server_cert_data['cert_data'])
 
             if not server_certificate.verify(ca_private_key.point):
-                self.show_error("Server certificate verification failed!")
+                self.comm.error_occurred.emit("Server certificate verification failed!")
                 return
-            self.chat_area.append("[+] Server certificate verified.")
+
+            self.comm.message_received.emit("[+] Server certificate verified.")
             self.client_socket.send(self.client_certificate.cert_bytes())
 
-            data = eval(self.client_socket.recv(5000).decode())
+            # DH key exchange
+            data = recv_json(self.client_socket)
             if not verify_message(self.server_public_key, data):
-                self.show_error("Server message verification failed!")
+                self.comm.error_occurred.emit("Server message verification failed!")
                 return
 
             server_key_generated = data['message']
-            p = 2**256 - 2**32 - 977
-            G = FieldElement(20039604507154726964694453930606668883942751177735706227159751703972799940977, p)
-            encryption_private_key = FieldElement(random.randint(1, p - 1), p)
-            key_generated = pow(G.num, encryption_private_key.num, p)
 
-            self.client_socket.send(str(create_signed_message(PrivateKey(self.client_key), key_generated)).encode())
-            self.shared_secret = pow(server_key_generated, encryption_private_key.num, p)
-            self.chat_area.append("[+] Shared secret established.")
+            kx = KeyExchange()
+            key_generated = kx.public_component()
 
-            threading.Thread(target=self.receive_messages, daemon=True).start()
+            send_json(self.client_socket, create_signed_message(PrivateKey(self.client_key), key_generated))
+            self.shared_secret = kx.derive_shared(server_key_generated)
+            self.comm.message_received.emit("[+] Shared secret established.")
+
+            threading.Thread(target=self._receive_messages, daemon=True).start()
         except Exception as e:
-            self.show_error(f"[!] Connection error: {e}")
+            self.comm.error_occurred.emit(f"[!] Connection error: {e}")
 
-    def receive_messages(self):
+    def _receive_messages(self):
+        """Background thread to receive and decrypt messages."""
         try:
             while True:
-                response = self.client_socket.recv(2048)
-                if not response:
+                data = recv_json(self.client_socket)
+                if not data:
                     break
-                data = eval(response.decode())
                 if not verify_message(self.server_public_key, data):
-                    self.show_error("Invalid signature in received message.")
+                    self.comm.error_occurred.emit("Invalid signature in received message.")
                     continue
-                decrypted = xor_encrypt_decrypt(data['message'], str(self.shared_secret)).decode()
-                self.comm.message_received.emit(f"{decrypted}")
+                decrypted = xor_encrypt_decrypt(data['message'], str(self.shared_secret)).decode(errors=XOR_ENCODING)
+                self.comm.message_received.emit(decrypted)
         except Exception as e:
-            self.show_error(f"[!] Error receiving message: {e}")
+            self.comm.error_occurred.emit(f"[!] Error receiving message: {e}")
 
-    def send_message(self):
+    def _send_message(self):
+        """Encrypt, sign, and send user message."""
         try:
             message = self.message_input.text().strip()
-            if not message:
+            if not message or not self.shared_secret:
                 return
             self.message_input.clear()
-            encrypted = xor_encrypt_decrypt(message, str(self.shared_secret)).decode()
+            encrypted = xor_encrypt_decrypt(message, str(self.shared_secret)).decode(errors=XOR_ENCODING)
             signed = create_signed_message(PrivateKey(self.client_key), encrypted)
-            self.client_socket.send(str(signed).encode())
+            send_json(self.client_socket, signed)
             self.chat_area.append(f"[You]: {message}")
         except Exception as e:
-            self.show_error(f"[!] Error sending message: {e}")
+            self.comm.error_occurred.emit(f"[!] Error sending message: {e}")
 
-    def display_message(self, message):
+    def _display_message(self, message: str):
+        """Append message to chat area."""
         self.chat_area.append(message)
 
-    def show_error(self, message):
+    def _show_error(self, message: str):
+        """Display error in message box and chat area."""
         QMessageBox.critical(self, "Error", message)
         self.chat_area.append(f"[ERROR]: {message}")
 
