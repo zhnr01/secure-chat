@@ -1,16 +1,20 @@
+"""Elliptic Curve Cryptography primitives for secp256k1.
+
+Based on 'Programming Bitcoin' by Jimmy Song.
+"""
 from random import randint
 import hashlib
 import hmac
 
-
-'''
-P = maximum size of private key
-N = maximum number of private keys
-'''
+# secp256k1 curve parameters
+A = 0
+B = 7
+P = 2**256 - 2**32 - 977  # Field prime
+N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141  # Group order
 
 
 class FieldElement:
-
+    """Element of a finite field with modular arithmetic."""
     def __init__(self, num, prime):
         if num >= prime or num < 0:
             error = 'Num {} not in field range 0 to {}'.format(num, prime - 1)
@@ -64,7 +68,7 @@ class FieldElement:
 
 
 class Point:
-
+    """Point on an elliptic curve y^2 = x^3 + ax + b."""
     def __init__(self, x, y, a, b):
         self.a = a
         self.b = b
@@ -123,14 +127,8 @@ class Point:
         return result
 
 
-A = 0
-B = 7
-P = 2**256 - 2**32 - 977
-N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141
-
-
 class S256Field(FieldElement):
-
+    """Field element for secp256k1 curve."""
     def __init__(self, num, prime=None):
         super().__init__(num=num, prime=P)
 
@@ -139,7 +137,7 @@ class S256Field(FieldElement):
 
 
 class S256Point(Point):
-
+    """Point on secp256k1 curve with ECDSA verification."""
     def __init__(self, x, y, a=None, b=None):
         a, b = S256Field(A), S256Field(B)
         if type(x) == int:
@@ -171,7 +169,7 @@ G = S256Point(
 
 
 class Signature:
-
+    """ECDSA signature with (r, s) components."""
     def __init__(self, r, s):
         self.r = r
         self.s = s
@@ -181,7 +179,7 @@ class Signature:
 
 
 class PrivateKey:
-
+    """ECDSA private key for signing messages."""
     def __init__(self, secret):
         self.secret = secret
         self.point = secret * G
@@ -198,8 +196,8 @@ class PrivateKey:
             s = N - s
         return Signature(r, s)
 
-    # still need to understand this function 
-    def deterministic_k(self, z):
+    def deterministic_k(self, z: int) -> int:
+        """RFC 6979 deterministic k generation for ECDSA."""
         k = b'\x00' * 32
         v = b'\x01' * 32
         if z > N:
