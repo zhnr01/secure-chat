@@ -1,17 +1,20 @@
+"""Certificate Authority and PEM handling utilities."""
 import hashlib
 import json
 import base64
 from random import randint
 from enum import Enum
-from ecc import *
+from ecc import PrivateKey, Signature, N
 
 
 class PEMLabel(Enum):
+    """PEM block labels."""
     PRIVATE_KEY = "PRIVATE KEY"
     CERTIFICATE = "CERTIFICATE"
 
 
 class PEMFormatter:
+    """Encode/decode data to/from PEM format."""
     @staticmethod
     def encode(data: bytes, label: PEMLabel) -> str:
         base64_encoded = base64.b64encode(data).decode()
@@ -27,6 +30,7 @@ class PEMFormatter:
 
 
 class PEMHandler:
+    """Load/save PEM files."""
     @staticmethod
     def load(filename: str, label: PEMLabel) -> bytes:
         with open(filename, 'r') as f:
@@ -42,6 +46,7 @@ class PEMHandler:
 
 
 class PrivateKeyWrapper:
+    """Wrapper to load/save private keys in PEM format."""
     def __init__(self, private_key):
         self.private_key = private_key
 
@@ -55,11 +60,13 @@ class PrivateKeyWrapper:
 
 
 class Certificate:
+    """Digital certificate with signature for identity verification."""
+
     def __init__(self, cert_data, signature):
         self.cert_data = cert_data
         self.signature = signature
 
-    def cert_bytes(self) -> str:
+    def cert_bytes(self) -> bytes:
         cert_json = {
             "cert_data": self.cert_data,
             "signature": {
@@ -67,35 +74,37 @@ class Certificate:
                 "s": hex(self.signature.s)
             }
         }
-        cert_bytes = json.dumps(cert_json, sort_keys=True).encode()
-        return cert_bytes
+        return json.dumps(cert_json, sort_keys=True).encode()
 
-    def save(self, filename):
-        cert_bytes = self.cert_bytes()
-        PEMHandler.save(cert_bytes, filename, PEMLabel.CERTIFICATE)
+    def save(self, filename: str):
+        PEMHandler.save(self.cert_bytes(), filename, PEMLabel.CERTIFICATE)
 
     @staticmethod
-    def load(filename):
-        server_certificate = json.loads(
+    def load(filename: str) -> "Certificate":
+        cert_dict = json.loads(
             PEMHandler.load(filename, PEMLabel.CERTIFICATE).decode())
+        return Certificate(
+            cert_dict['cert_data'],
+            Signature(
+                r=int(cert_dict['signature']['r'], 16),
+                s=int(cert_dict['signature']['s'], 16)
+            )
+        )
 
-        return Certificate(server_certificate['cert_data'], Signature(
-            r=eval(server_certificate['signature']['r']),
-            s=eval(server_certificate['signature']['s'])
-        ))
-
-    def verify(self, ca_public_key):
+    def verify(self, ca_public_key) -> bool:
         cert_bytes = json.dumps(self.cert_data, sort_keys=True).encode()
         cert_hash = int.from_bytes(hashlib.sha256(cert_bytes).digest(), 'big')
         return ca_public_key.verify(cert_hash, self.signature)
 
 
 class CertificateAuthority:
+    """Issues and signs certificates."""
+
     def __init__(self, private_key=None):
-        self.private_key = private_key or PrivateKey(randint(1, N-1))
+        self.private_key = private_key or PrivateKey(randint(1, N - 1))
         self.public_key = self.private_key.point
 
-    def sign_certificate(self, subject_name, subject_public_key):
+    def sign_certificate(self, subject_name: str, subject_public_key) -> Certificate:
         cert_data = {
             "subject": subject_name,
             "public_key_x": hex(subject_public_key.x.num),
@@ -106,15 +115,5 @@ class CertificateAuthority:
         signature = self.private_key.sign(cert_hash)
         return Certificate(cert_data, signature)
 
-    def get_private_key_wrapper(self):
+    def get_private_key_wrapper(self) -> PrivateKeyWrapper:
         return PrivateKeyWrapper(self.private_key)
-
-
-# pk = PrivateKey(randint(1, N-1))
-# public_key = pk.point
-# print(pk.secret)
-
-# ca_pk = PrivateKeyWrapper.load('ca_private.pem')
-# ca = CertificateAuthority(ca_pk)
-# cert = ca.sign_certificate("User", public_key)
-# cert.save('client2_certificate.pem')
