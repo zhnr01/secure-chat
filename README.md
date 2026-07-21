@@ -1,183 +1,119 @@
+# Secure Chat
 
-# 🔐 Secure Encrypted Chatroom
+An end-to-end authenticated chat built on a **from-scratch** implementation of
+elliptic curve cryptography — secp256k1, ECDSA, a mini certificate authority,
+Diffie-Hellman key agreement, and an authenticated cipher — using **only the
+Python standard library**.
 
-A Python-based chatroom application that uses **Elliptic Curve Cryptography (ECC)**, **Digital Certificates**, and **Diffie-Hellman Key Exchange** to establish **end-to-end encrypted communication** between clients via a server.
+The point of the project is educational: to show how the pieces of a real
+secure channel fit together by building each one by hand rather than importing
+a crypto library.
 
----
+> ⚠️ **Not for production.** The primitives are correct in construction but are
+> not constant-time and have not been audited. Use a vetted library (e.g.
+> `cryptography`, AES-GCM, ChaCha20-Poly1305) for anything real.
 
-## 🚀 Features
+## What it does
 
-- ✅ **CLI and GUI clients** (PyQt5)
-- 🔐 **ECC digital signatures** (custom implementation)
-- 📜 **Certificate Authority (CA)** to verify identities
-- 🔑 **Diffie-Hellman key exchange** to derive session keys
-- 🔁 **End-to-end encrypted messaging** (XOR for simplicity)
-- 🔎 **Message authenticity verification** using ECDSA
-- 🌐 **Multi-client support** via threaded server
+- Verifies both ends with **CA-signed certificates** before any traffic flows.
+- Establishes a per-session key with **Diffie-Hellman**, signed at each step so
+  the exchange itself can't be tampered with.
+- Encrypts every message with an **authenticated cipher** (HKDF-derived keys,
+  per-message nonce, encrypt-then-MAC) — tampering is detected and rejected.
+- Signs every message with **ECDSA**, so a malicious relay can't forge or alter
+  messages without the recipient noticing.
+- Relays between multiple clients over a **threaded TCP server**.
 
----
+## Architecture
 
-## 🔧 Architecture Overview
-
-1. **Certificates**:
-   - Both client and server hold a certificate signed by the local CA (`ca_private.pem`).
-   - Certificates are verified using the CA's public key before communication begins.
-
-2. **Key Exchange**:
-   - Each party generates a temporary DH key.
-   - Both parties derive a **shared secret** for session encryption.
-
-3. **Message Flow**:
-   - Messages are encrypted using XOR with the shared key.
-   - Each message is **signed using ECDSA** and verified by the receiver.
-
-4. **Server Role**:
-   - Verifies client certificates and messages.
-   - Broadcasts messages to all connected clients (with proper re-encryption).
-
----
-
-## 📁 File Structure
+The package is layered so dependencies only point inward — the cryptography
+knows nothing about sockets, and the application layer composes everything else.
 
 ```
-project/
-├── server.py                  # Server code
-├── clientcli.py               # CLI client
-├── clientgui.py               # GUI client (PyQt5)
-├── config.py                  # Central configuration (host, port, primes, keys)
-├── utils.py                   # Shared utilities (XOR, signing, cert parsing)
-├── protocol.py                # Length-prefixed JSON framing helpers
-├── key_exchange.py            # KeyExchange class for Diffie-Hellman
-├── messages.py                # SignedMessage dataclass
-├── logging_util.py            # Logging setup utility
-├── ecc.py                     # ECC math (field, curve, signatures)
-├── certificate_authority.py   # CA, certificate signing, PEM handling
-├── ca_private.pem             # Certificate Authority private key
-├── client_certificate.pem     # Client certificate
-├── server_certificate.pem     # Server certificate
-├── requirements.txt           # Python dependencies
-└── README.md                  # You are here
+src/secure_chat/
+├── crypto/        # Pure primitives: ECC/ECDSA, HKDF+HMAC cipher, DH, secure RNG
+│   ├── ecc.py             secp256k1 field, curve, and ECDSA (RFC 6979)
+│   ├── cipher.py          authenticated cipher + HKDF key derivation
+│   ├── key_exchange.py    Diffie-Hellman participant
+│   ├── hashing.py         shared SHA-256 helper
+│   ├── constants.py       curve parameters and encoding conventions
+│   └── rng.py             cryptographically secure randomness
+├── pki/           # Depends only on crypto
+│   ├── certificate_authority.py   CA, certificates, PEM handling
+│   ├── identity.py                loads a participant's (key, cert, CA key)
+│   └── generate_keys.py           one-time key/cert generation script
+├── transport/     # Depends only on crypto
+│   ├── protocol.py        length-prefixed JSON framing
+│   └── messaging.py       signed-message envelopes
+├── server/        # Application layer
+│   ├── app.py             threaded relay
+│   └── session.py         ClientSession + thread-safe registry
+├── client/
+│   └── cli.py             interactive CLI client
+└── config.py      # Runtime/deployment configuration
 ```
 
-## 📚 Based On
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the handshake sequence
+and the reasoning behind each layer.
 
-Parts of the ECC code, especially the `ecc.py` file, are based on the book:  
-**“Programming Bitcoin” by Jimmy Song**  
-🔗 [https://github.com/jimmysong/programmingbitcoin](https://github.com/jimmysong/programmingbitcoin)
+## Getting started
 
----
-
-
-
----
-
-## 🛠 Requirements
-
-- Python 3.10+
-- PyQt5 (for GUI client)
-
-Install dependencies:
+Requires Python 3.10+. There are no runtime dependencies.
 
 ```bash
-pip install -r requirements.txt
+# Install the package (editable) with dev tooling
+pip install -e ".[dev]"
+
+# 1. Generate a CA, server, and client identity (writes .pem files, git-ignored)
+python -m secure_chat.pki.generate_keys
+
+# 2. Start the server
+secure-chat-server
+#   or: python -m secure_chat.server.app --host 0.0.0.0 --port 9000
+
+# 3. Start one or more clients (in separate terminals)
+secure-chat-client
+#   or: python -m secure_chat.client.cli --host 127.0.0.1 --port 9000
 ```
 
----
+Type a message and press enter to send; type `exit` to leave.
 
-## ⚙️ Configuration
+## Configuration
 
-All tunable parameters live in `config.py`:
+Runtime settings live in `secure_chat/config.py` and can be overridden with
+environment variables — nothing environment-specific is hard-coded.
 
-| Variable | Description |
-|----------|-------------|
-| `HOST` | Server bind address (default `localhost`) |
-| `PORT` | Server port (default `8080`) |
-| `RECV_BYTES` | Socket buffer size |
-| `P_FIELD` | DH prime modulus (secp256k1 field prime) |
-| `G_GENERATOR_NUM` | DH generator |
+| Variable | Environment override | Default |
+|----------|----------------------|---------|
+| Host | `SECURE_CHAT_HOST` | `localhost` |
+| Port | `SECURE_CHAT_PORT` | `8080` |
+| Listen backlog | `SECURE_CHAT_BACKLOG` | `10` |
+| CA key path | `SECURE_CHAT_CA_KEY` | `ca_private.pem` |
+| Server key / cert | `SECURE_CHAT_SERVER_KEY` / `SECURE_CHAT_SERVER_CERT` | `server_private.pem` / `server_certificate.pem` |
+| Client key / cert | `SECURE_CHAT_CLIENT_KEY` / `SECURE_CHAT_CLIENT_CERT` | `client_private.pem` / `client_certificate.pem` |
 
----
+Cryptographic invariants (curve parameters, encoding) live separately in
+`crypto/constants.py`, since they are properties of the algorithms rather than
+deployment settings.
 
-## 🧪 How to Run
-
-### 1. 🔑 Generate Certificates (Optional if already present)
-
-> If not already created:
-```python
-from certificate_authority import CertificateAuthority, PrivateKeyWrapper
-
-ca = CertificateAuthority()
-ca.get_private_key_wrapper().save('ca_private.pem')
-
-server_cert = ca.sign_certificate("Server", ca.public_key)
-server_cert.save('server_certificate.pem')
-
-client_cert = ca.sign_certificate("User", ca.public_key)
-client_cert.save('client_certificate.pem')
-```
-
----
-
-### 2. ▶️ Run the Server
+## Testing
 
 ```bash
-python server.py
-# Or with CLI overrides:
-python server.py --host 0.0.0.0 --port 9000
+pytest          # run the suite
+ruff check .    # lint
 ```
 
----
+The suite covers the cipher (roundtrip, nonce uniqueness, tamper detection, key
+separation, an RFC 5869 HKDF vector), ECDSA (sign/verify, low-s, deterministic
+nonce, forgery rejection), the PKI (certificate verify/reject, PEM roundtrips),
+transport framing, Diffie-Hellman agreement, and a full server-relay
+integration test. CI runs these on Python 3.10–3.12.
 
-### 3. 💻 Run the CLI Client
+## Credits
 
-```bash
-python clientcli.py
-# Or with CLI overrides:
-python clientcli.py --host 192.168.1.10 --port 9000
-```
+The elliptic curve math in `crypto/ecc.py` is based on *Programming Bitcoin* by
+Jimmy Song — <https://github.com/jimmysong/programmingbitcoin>.
 
----
+## License
 
-### 4. 🖥 Run the GUI Client
-
-```bash
-python clientgui.py
-```
-
----
-
-## 🔐 Security Notes
-
-* **ECC + ECDSA**: Custom implementation of signing and verification (see `ecc.py`).
-* **Certificates**: Manually signed by local CA (demo-style trust).
-* **Key Exchange**: Uses `KeyExchange` class wrapping Diffie-Hellman with configurable prime.
-* **Protocol Framing**: Length-prefixed JSON messages via `protocol.py` prevent partial reads.
-* **Encryption**: Simple XOR used for demo purposes. For real-world apps, use AES or ChaCha20.
-
----
-
-## 🧪 Running Tests
-
-A minimal round-trip test validates XOR, signing, verification, and DH:
-
-```bash
-python test_roundtrip.py
-```
-
----
-
-## 🎓 Educational Value
-
-This project is built from **scratch** to help understand:
-
-* Elliptic Curve math
-* How digital signatures work
-* The role of CAs and certificates
-* Key exchange protocols
-* Secure socket programming in Python
-
----
-
-> ⚠️ This project is a **work-in-progress prototype** intended for learning and experimentation. Not ready for production.
-
----
+MIT.
