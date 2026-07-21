@@ -16,7 +16,7 @@ from ..config import (
     HOST,
     PORT,
 )
-from ..crypto.cipher import xor_encrypt_decrypt
+from ..crypto.cipher import AuthenticationError, SessionKeys, open_text, seal_text
 from ..crypto.key_exchange import KeyExchange
 from ..observability import setup_logger
 from ..pki.certificate_authority import Certificate, PrivateKeyWrapper
@@ -33,7 +33,7 @@ class Client:
         self.logger = setup_logger("client")
         self.client_certificate = Certificate.load(CLIENT_CERT_PATH)
         self.server_public_key = None
-        self.shared_secret = None
+        self.session_keys = None
         self.client_socket = None
         # The client's own signing key — matches its certificate's public key.
         self.client_key = PrivateKeyWrapper.load(CLIENT_PRIVATE_KEY_PATH).private_key
@@ -69,7 +69,8 @@ class Client:
         key_generated = kx.public_component()
         send_json(self.client_socket, create_signed_message(self.client_key, key_generated))
 
-        self.shared_secret = kx.derive_shared(server_key_generated)
+        shared_secret = kx.derive_shared(server_key_generated)
+        self.session_keys = SessionKeys.derive(shared_secret)
         self.logger.info("Shared secret established with server.")
 
     def _receive_loop(self) -> None:
@@ -82,8 +83,10 @@ class Client:
                     self.logger.warning("Server message verification failed!")
                     self.client_socket.close()
                     return
-                decrypted_bytes = xor_encrypt_decrypt(response["message"], str(self.shared_secret))
-                self.logger.info(decrypted_bytes.decode(errors="ignore"))
+                try:
+                    self.logger.info(open_text(self.session_keys, response["message"]))
+                except AuthenticationError:
+                    self.logger.warning("Received an unauthentic message; ignoring.")
         except Exception as e:
             self.logger.exception(f"Error receiving message: {e}")
 
@@ -94,9 +97,8 @@ class Client:
                 message = input("> ")
                 if message.lower() == "exit":
                     break
-                encrypted_bytes = xor_encrypt_decrypt(message, str(self.shared_secret))
-                encrypted_message = encrypted_bytes.decode(errors="ignore")
-                send_json(self.client_socket, create_signed_message(self.client_key, encrypted_message))
+                token = seal_text(self.session_keys, message)
+                send_json(self.client_socket, create_signed_message(self.client_key, token))
         except (EOFError, KeyboardInterrupt):
             pass
         except Exception as e:

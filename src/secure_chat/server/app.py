@@ -16,7 +16,7 @@ from ..config import (
     SERVER_CERT_PATH,
     SERVER_PRIVATE_KEY_PATH,
 )
-from ..crypto.cipher import xor_encrypt_decrypt
+from ..crypto.cipher import AuthenticationError, SessionKeys, open_text, seal_text
 from ..crypto.key_exchange import KeyExchange
 from ..observability import setup_logger
 from ..pki.certificate_authority import Certificate, PrivateKeyWrapper
@@ -48,13 +48,13 @@ class Server:
         self.logger.info(f"Server started on {self.host}:{self.port}")
 
     def broadcast(self, sender_socket, message: str) -> None:
-        for client_socket, _, client_shared_secret in list(self.connected_clients):
+        # Each recipient has its own session key, so we re-encrypt per client.
+        for client_socket, _, client_keys in list(self.connected_clients):
             if client_socket is sender_socket:
                 continue
             try:
-                encrypted_bytes = xor_encrypt_decrypt(message, str(client_shared_secret))
-                encrypted_message = encrypted_bytes.decode(errors="ignore")
-                signed = create_signed_message(self.server_key, encrypted_message)
+                token = seal_text(client_keys, message)
+                signed = create_signed_message(self.server_key, token)
                 send_json(client_socket, signed)
             except Exception:
                 self.logger.warning("Failed to deliver message to a client")
@@ -84,9 +84,10 @@ class Server:
                 return
 
             shared_secret = kx.derive_shared(int(data["message"]))
+            session_keys = SessionKeys.derive(shared_secret)
             self.logger.info(f"Shared secret established with {client_address}")
 
-            self.connected_clients.append((client_socket, client_address, shared_secret))
+            self.connected_clients.append((client_socket, client_address, session_keys))
 
             while True:
                 encrypted_message = recv_json(client_socket)
@@ -97,10 +98,13 @@ class Server:
                     self.logger.warning(f"Client {client_address} message verification failed!")
                     return
 
-                decrypted_bytes = xor_encrypt_decrypt(encrypted_message["message"], str(shared_secret))
-                decrypted_message = decrypted_bytes.decode(errors="ignore")
-                self.logger.info(f"[{client_address}] {decrypted_message}")
+                try:
+                    decrypted_message = open_text(session_keys, encrypted_message["message"])
+                except AuthenticationError:
+                    self.logger.warning(f"Client {client_address} sent an unauthentic message!")
+                    return
 
+                self.logger.info(f"[{client_address}] {decrypted_message}")
                 self.broadcast(client_socket, f"[{client_address}] {decrypted_message}")
 
         except Exception as e:
