@@ -5,12 +5,17 @@ signs that binding with its own private key; anyone holding the CA public key
 can then verify a certificate without contacting the CA.
 """
 import base64
-import hashlib
 import json
 from enum import Enum
 
-from ..crypto.ecc import N, PrivateKey, Signature, S256Point
+from ..crypto.constants import BYTE_ORDER, GROUP_ORDER, SCALAR_BYTE_LENGTH
+from ..crypto.ecc import PrivateKey, Signature, S256Point
+from ..crypto.hashing import sha256_int
 from ..crypto.rng import randint
+
+_HEX_RADIX = 16
+_PEM_LINE_WIDTH = 64
+
 
 
 class PEMLabel(Enum):
@@ -26,7 +31,10 @@ class PEMFormatter:
     @staticmethod
     def encode(data: bytes, label: PEMLabel) -> str:
         base64_encoded = base64.b64encode(data).decode()
-        lines = [base64_encoded[i:i + 64] for i in range(0, len(base64_encoded), 64)]
+        lines = [
+            base64_encoded[i:i + _PEM_LINE_WIDTH]
+            for i in range(0, len(base64_encoded), _PEM_LINE_WIDTH)
+        ]
         return (
             f"-----BEGIN {label.value}-----\n"
             + "\n".join(lines)
@@ -71,12 +79,13 @@ class PrivateKeyWrapper:
         return self.private_key.point
 
     def save(self, filename: str):
-        private_key_bytes = self.private_key.secret.to_bytes(32, "big")
+        private_key_bytes = self.private_key.secret.to_bytes(SCALAR_BYTE_LENGTH, BYTE_ORDER)
         PEMHandler.save(private_key_bytes, filename, PEMLabel.PRIVATE_KEY)
 
     @staticmethod
     def load(filename: str) -> "PrivateKeyWrapper":
-        secret = int.from_bytes(PEMHandler.load(filename, PEMLabel.PRIVATE_KEY), "big")
+        raw = PEMHandler.load(filename, PEMLabel.PRIVATE_KEY)
+        secret = int.from_bytes(raw, BYTE_ORDER)
         return PrivateKeyWrapper(PrivateKey(secret))
 
 
@@ -101,12 +110,22 @@ class Certificate:
         PEMHandler.save(self.cert_bytes(), filename, PEMLabel.CERTIFICATE)
 
     @staticmethod
+    def _canonical_hash(cert_data: dict) -> int:
+        """Hash the certificate body using its canonical (sorted) JSON form.
+
+        Signing and verifying must hash byte-for-byte identical input, so the
+        key order is fixed with ``sort_keys``.
+        """
+        canonical = json.dumps(cert_data, sort_keys=True).encode()
+        return sha256_int(canonical)
+
+    @staticmethod
     def from_dict(cert_dict: dict) -> "Certificate":
         return Certificate(
             cert_dict["cert_data"],
             Signature(
-                r=int(cert_dict["signature"]["r"], 16),
-                s=int(cert_dict["signature"]["s"], 16),
+                r=int(cert_dict["signature"]["r"], _HEX_RADIX),
+                s=int(cert_dict["signature"]["s"], _HEX_RADIX),
             ),
         )
 
@@ -118,22 +137,20 @@ class Certificate:
     def public_key(self) -> S256Point:
         """Extract the subject's public key as an S256Point."""
         return S256Point(
-            int(self.cert_data["public_key_x"], 16),
-            int(self.cert_data["public_key_y"], 16),
+            int(self.cert_data["public_key_x"], _HEX_RADIX),
+            int(self.cert_data["public_key_y"], _HEX_RADIX),
         )
 
     def verify(self, ca_public_key: S256Point) -> bool:
         """Return True if this certificate was signed by ``ca_public_key``."""
-        cert_bytes = json.dumps(self.cert_data, sort_keys=True).encode()
-        cert_hash = int.from_bytes(hashlib.sha256(cert_bytes).digest(), "big")
-        return ca_public_key.verify(cert_hash, self.signature)
+        return ca_public_key.verify(self._canonical_hash(self.cert_data), self.signature)
 
 
 class CertificateAuthority:
     """Issues and signs certificates."""
 
     def __init__(self, private_key: PrivateKey | None = None):
-        self.private_key = private_key or PrivateKey(randint(1, N - 1))
+        self.private_key = private_key or PrivateKey(randint(1, GROUP_ORDER - 1))
         self.public_key = self.private_key.point
 
     def sign_certificate(self, subject_name: str, subject_public_key: S256Point) -> Certificate:
@@ -142,9 +159,7 @@ class CertificateAuthority:
             "public_key_x": hex(subject_public_key.x.num),
             "public_key_y": hex(subject_public_key.y.num),
         }
-        cert_bytes = json.dumps(cert_data, sort_keys=True).encode()
-        cert_hash = int.from_bytes(hashlib.sha256(cert_bytes).digest(), "big")
-        signature = self.private_key.sign(cert_hash)
+        signature = self.private_key.sign(Certificate._canonical_hash(cert_data))
         return Certificate(cert_data, signature)
 
     def get_private_key_wrapper(self) -> PrivateKeyWrapper:

@@ -1,9 +1,12 @@
-"""Central configuration for secure-chat.
+"""Central runtime configuration for secure-chat.
 
-Values can be overridden via environment variables so that nothing sensitive
-or environment-specific is hard-coded. See ``docs/DESIGN.md`` for the rationale.
+Deployment settings (networking, DH parameters, file paths) live here and can
+be overridden via environment variables, so nothing environment-specific is
+hard-coded. Cryptographic protocol invariants live in ``crypto/constants.py``.
 """
 import os
+
+from .crypto.constants import FIELD_PRIME
 
 # --- Networking -------------------------------------------------------------
 HOST: str = os.getenv("SECURE_CHAT_HOST", "localhost")
@@ -11,9 +14,10 @@ PORT: int = int(os.getenv("SECURE_CHAT_PORT", "8080"))
 BACKLOG: int = int(os.getenv("SECURE_CHAT_BACKLOG", "10"))
 
 # --- Diffie-Hellman parameters ----------------------------------------------
-# secp256k1 field prime, reused here so the DH group is a large, well-known
-# prime. G is a simple demo generator (educational; not a vetted group).
-P_FIELD: int = 2**256 - 2**32 - 977
+# Reuse the secp256k1 field prime as the DH modulus so the group is a large,
+# well-known prime. The generator is a simple demo value; this is educational,
+# not a vetted DH group.
+P_FIELD: int = FIELD_PRIME
 G_GENERATOR_NUM: int = 5
 
 # --- File paths -------------------------------------------------------------

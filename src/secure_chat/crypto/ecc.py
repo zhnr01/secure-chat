@@ -1,89 +1,95 @@
 """Elliptic Curve Cryptography primitives for secp256k1.
 
-This module is implemented from scratch (no third-party libraries) and is the
-heart of the project. It provides:
-
-* :class:`FieldElement` / :class:`S256Field` — arithmetic in the finite field
-  GF(p) with p = 2**256 - 2**32 - 977.
-* :class:`Point` / :class:`S256Point` — points on the curve y^2 = x^3 + 7 with
-  addition, doubling, and double-and-add scalar multiplication.
-* :class:`Signature`, :class:`PrivateKey` — ECDSA signing and verification with
-  RFC 6979 deterministic nonce (``k``) generation.
+Implemented from scratch on the Python standard library. The module provides
+finite-field arithmetic, curve point operations, and ECDSA signing/verification
+with RFC 6979 deterministic nonces.
 
 Based on 'Programming Bitcoin' by Jimmy Song.
 
-.. warning::
-   This is an educational implementation. It is not constant-time and has not
-   been audited. Do not use it to protect real secrets.
+This is an educational implementation: it is not constant-time and has not been
+audited, so it should not be used to protect real secrets.
 """
+from __future__ import annotations
+
 import hashlib
 import hmac
 
-# secp256k1 curve parameters
-A = 0
-B = 7
-P = 2**256 - 2**32 - 977  # Field prime
-N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141  # Group order
+from .constants import (
+    BYTE_ORDER,
+    CURVE_A,
+    CURVE_B,
+    FIELD_PRIME,
+    GENERATOR_X,
+    GENERATOR_Y,
+    GROUP_ORDER,
+    SCALAR_BYTE_LENGTH,
+)
+
+# Public aliases kept for readability at call sites.
+A = CURVE_A
+B = CURVE_B
+P = FIELD_PRIME
+N = GROUP_ORDER
+
+_SHA256 = hashlib.sha256
 
 
 class FieldElement:
-    """Element of a finite field with modular arithmetic."""
+    """An element of the finite field GF(prime) with modular arithmetic."""
 
-    def __init__(self, num, prime):
+    def __init__(self, num: int, prime: int):
         if num >= prime or num < 0:
-            error = "Num {} not in field range 0 to {}".format(num, prime - 1)
-            raise ValueError(error)
+            raise ValueError(f"Num {num} not in field range 0 to {prime - 1}")
         self.num = num
         self.prime = prime
 
-    def __repr__(self):
-        return "FieldElement_{}({})".format(self.prime, self.num)
+    def __repr__(self) -> str:
+        return f"FieldElement_{self.prime}({self.num})"
 
-    def __eq__(self, other):
-        if other is None:
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, FieldElement):
             return False
         return self.num == other.num and self.prime == other.prime
 
-    def __ne__(self, other):
-        return not (self == other)
+    def __ne__(self, other: object) -> bool:
+        return not self == other
 
-    def __add__(self, other):
+    def _assert_same_field(self, other: "FieldElement") -> None:
         if self.prime != other.prime:
-            raise TypeError("Cannot add two numbers in different Fields")
-        num = (self.num + other.num) % self.prime
-        return self.__class__(num, self.prime)
+            raise TypeError("Cannot operate on numbers in different fields")
 
-    def __sub__(self, other):
-        if self.prime != other.prime:
-            raise TypeError("Cannot subtract two numbers in different Fields")
-        num = (self.num - other.num) % self.prime
-        return self.__class__(num, self.prime)
+    def __add__(self, other: "FieldElement") -> "FieldElement":
+        self._assert_same_field(other)
+        return self.__class__((self.num + other.num) % self.prime, self.prime)
 
-    def __mul__(self, other):
-        if self.prime != other.prime:
-            raise TypeError("Cannot multiply two numbers in different Fields")
-        num = (self.num * other.num) % self.prime
-        return self.__class__(num, self.prime)
+    def __sub__(self, other: "FieldElement") -> "FieldElement":
+        self._assert_same_field(other)
+        return self.__class__((self.num - other.num) % self.prime, self.prime)
 
-    def __pow__(self, exponent):
+    def __mul__(self, other: "FieldElement") -> "FieldElement":
+        self._assert_same_field(other)
+        return self.__class__((self.num * other.num) % self.prime, self.prime)
+
+    def __pow__(self, exponent: int) -> "FieldElement":
         n = exponent % (self.prime - 1)
-        num = pow(self.num, n, self.prime)
-        return self.__class__(num, self.prime)
+        return self.__class__(pow(self.num, n, self.prime), self.prime)
 
-    def __truediv__(self, other):
-        if self.prime != other.prime:
-            raise TypeError("Cannot divide two numbers in different Fields")
-        # Fermat's little theorem: a^-1 == a^(p-2) (mod p)
-        num = (self.num * pow(other.num, self.prime - 2, self.prime)) % self.prime
-        return self.__class__(num, self.prime)
+    def __truediv__(self, other: "FieldElement") -> "FieldElement":
+        self._assert_same_field(other)
+        # Division by Fermat's little theorem: a^-1 == a^(p-2) (mod p).
+        inverse = pow(other.num, self.prime - 2, self.prime)
+        return self.__class__((self.num * inverse) % self.prime, self.prime)
 
-    def __rmul__(self, coefficient):
-        num = (self.num * coefficient) % self.prime
-        return self.__class__(num=num, prime=self.prime)
+    def __rmul__(self, coefficient: int) -> "FieldElement":
+        return self.__class__((self.num * coefficient) % self.prime, self.prime)
 
 
 class Point:
-    """Point on an elliptic curve y^2 = x^3 + ax + b."""
+    """A point on the elliptic curve y^2 = x^3 + ax + b.
+
+    The point at infinity (the group's identity element) is represented by
+    ``x`` and ``y`` both being ``None``.
+    """
 
     def __init__(self, x, y, a, b):
         self.a = a
@@ -93,48 +99,64 @@ class Point:
         if self.x is None and self.y is None:
             return
         if self.y**2 != self.x**3 + a * x + b:
-            raise ValueError("({}, {}) is not on the curve".format(x, y))
+            raise ValueError(f"({x}, {y}) is not on the curve")
 
-    def __eq__(self, other):
-        return self.x == other.x and self.y == other.y and self.a == other.a and self.b == other.b
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Point):
+            return False
+        return (
+            self.x == other.x
+            and self.y == other.y
+            and self.a == other.a
+            and self.b == other.b
+        )
 
-    def __ne__(self, other):
-        return not (self == other)
+    def __ne__(self, other: object) -> bool:
+        return not self == other
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         if self.x is None:
             return "Point(infinity)"
-        elif isinstance(self.x, FieldElement):
-            return "Point({},{})_{}_{} FieldElement({})".format(
-                self.x.num, self.y.num, self.a.num, self.b.num, self.x.prime
-            )
-        else:
-            return "Point({},{})_{}_{}".format(self.x, self.y, self.a, self.b)
+        if isinstance(self.x, FieldElement):
+            return f"Point({self.x.num},{self.y.num})_{self.a.num}_{self.b.num}"
+        return f"Point({self.x},{self.y})_{self.a}_{self.b}"
 
-    def __add__(self, other):
+    def _is_infinity(self) -> bool:
+        return self.x is None
+
+    def __add__(self, other: "Point") -> "Point":
         if self.a != other.a or self.b != other.b:
-            raise TypeError("Points {}, {} are not on the same curve".format(self, other))
-        if self.x is None:
+            raise TypeError(f"Points {self}, {other} are not on the same curve")
+
+        # Adding the identity element returns the other operand unchanged.
+        if self._is_infinity():
             return other
-        if other.x is None:
+        if other._is_infinity():
             return self
+
+        # Points on a vertical line sum to the point at infinity.
         if self.x == other.x and self.y != other.y:
             return self.__class__(None, None, self.a, self.b)
+
+        # Distinct x-coordinates: add using the slope of the connecting line.
         if self.x != other.x:
-            s = (other.y - self.y) / (other.x - self.x)
-            x = s**2 - self.x - other.x
-            y = s * (self.x - x) - self.y
-            return self.__class__(x, y, self.a, self.b)
-        if self == other and self.y == 0 * self.x:
-            return self.__class__(None, None, self.a, self.b)
-        if self == other:
-            s = (3 * self.x**2 + self.a) / (2 * self.y)
-            x = s**2 - 2 * self.x
-            y = s * (self.x - x) - self.y
+            slope = (other.y - self.y) / (other.x - self.x)
+            x = slope**2 - self.x - other.x
+            y = slope * (self.x - x) - self.y
             return self.__class__(x, y, self.a, self.b)
 
-    def __rmul__(self, coefficient):
-        # Double-and-add: O(log n) scalar multiplication.
+        # Doubling a point whose y is zero yields the point at infinity.
+        if self == other and self.y == 0 * self.x:
+            return self.__class__(None, None, self.a, self.b)
+
+        # Otherwise the points are equal: double using the tangent slope.
+        slope = (3 * self.x**2 + self.a) / (2 * self.y)
+        x = slope**2 - 2 * self.x
+        y = slope * (self.x - x) - self.y
+        return self.__class__(x, y, self.a, self.b)
+
+    def __rmul__(self, coefficient: int) -> "Point":
+        # Double-and-add gives O(log n) scalar multiplication.
         coef = coefficient
         current = self
         result = self.__class__(None, None, self.a, self.b)
@@ -147,37 +169,43 @@ class Point:
 
 
 class S256Field(FieldElement):
-    """Field element for the secp256k1 curve (prime fixed to P)."""
+    """A field element fixed to the secp256k1 field prime.
 
-    def __init__(self, num, prime=None):
+    ``prime`` is accepted only so inherited arithmetic (which reconstructs via
+    ``self.__class__(num, self.prime)``) keeps working; it must equal the
+    secp256k1 field prime if supplied.
+    """
+
+    def __init__(self, num: int, prime: int | None = None):
+        if prime is not None and prime != P:
+            raise ValueError("S256Field prime is fixed to the secp256k1 field prime")
         super().__init__(num=num, prime=P)
 
-    def __repr__(self):
-        return "{:x}".format(self.num).zfill(64)
+    def __repr__(self) -> str:
+        return f"{self.num:x}".zfill(64)
 
 
 class S256Point(Point):
-    """Point on the secp256k1 curve with ECDSA verification."""
+    """A point on secp256k1, with ECDSA verification."""
 
     def __init__(self, x, y, a=None, b=None):
         a, b = S256Field(A), S256Field(B)
-        if type(x) == int:
+        if isinstance(x, int):
             super().__init__(x=S256Field(x), y=S256Field(y), a=a, b=b)
         else:
             super().__init__(x=x, y=y, a=a, b=b)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         if self.x is None:
             return "S256Point(infinity)"
-        else:
-            return "S256Point({}, {})".format(self.x, self.y)
+        return f"S256Point({self.x}, {self.y})"
 
-    def __rmul__(self, coefficient):
-        coef = coefficient % N
-        return super().__rmul__(coef)
+    def __rmul__(self, coefficient: int) -> "S256Point":
+        # Reduce the scalar modulo the group order before multiplying.
+        return super().__rmul__(coefficient % N)
 
-    def verify(self, z, sig):
-        """Verify that signature ``sig`` over hash ``z`` was made by this key."""
+    def verify(self, z: int, sig: "Signature") -> bool:
+        """Return True if ``sig`` is a valid signature over hash ``z``."""
         s_inv = pow(sig.s, N - 2, N)
         u = z * s_inv % N
         v = sig.r * s_inv % N
@@ -185,66 +213,61 @@ class S256Point(Point):
         return total.x.num == sig.r
 
 
-# Generator point for secp256k1.
-G = S256Point(
-    0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798,
-    0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8,
-)
+G = S256Point(GENERATOR_X, GENERATOR_Y)
 
 
 class Signature:
-    """ECDSA signature with (r, s) components."""
+    """An ECDSA signature, expressed as the pair (r, s)."""
 
-    def __init__(self, r, s):
+    def __init__(self, r: int, s: int):
         self.r = r
         self.s = s
 
-    def __repr__(self):
-        return "Signature({:x},{:x})".format(self.r, self.s)
+    def __repr__(self) -> str:
+        return f"Signature({self.r:x},{self.s:x})"
 
 
 class PrivateKey:
-    """ECDSA private key for signing messages."""
+    """An ECDSA private key that can sign message hashes."""
 
-    def __init__(self, secret):
+    def __init__(self, secret: int):
         self.secret = secret
         self.point = secret * G
 
-    def hex(self):
-        return "{:x}".format(self.secret).zfill(64)
+    def hex(self) -> str:
+        return f"{self.secret:x}".zfill(64)
 
-    def sign(self, z):
+    def sign(self, z: int) -> Signature:
         k = self.deterministic_k(z)
         r = (k * G).x.num
         k_inv = pow(k, N - 2, N)
         s = (z + r * self.secret) * k_inv % N
-        # Low-s normalization (BIP-62) to prevent signature malleability.
-        if s > N / 2:
+        # Enforce low-s (BIP-62) to remove signature malleability. Integer
+        # division is required here: N // 2 on a float would lose precision.
+        if s > N // 2:
             s = N - s
         return Signature(r, s)
 
     def deterministic_k(self, z: int) -> int:
-        """RFC 6979 deterministic k generation for ECDSA.
+        """Derive the ECDSA nonce deterministically per RFC 6979.
 
-        Using a deterministic nonce instead of a random one removes the single
-        most common way homemade ECDSA leaks the private key: nonce reuse or
-        weak randomness.
+        A deterministic nonce removes the most common way homemade ECDSA leaks
+        the private key: reusing or weakly generating the per-signature nonce.
         """
-        k = b"\x00" * 32
-        v = b"\x01" * 32
+        k = b"\x00" * SCALAR_BYTE_LENGTH
+        v = b"\x01" * SCALAR_BYTE_LENGTH
         if z > N:
             z -= N
-        z_bytes = z.to_bytes(32, "big")
-        secret_bytes = self.secret.to_bytes(32, "big")
-        s256 = hashlib.sha256
-        k = hmac.new(k, v + b"\x00" + secret_bytes + z_bytes, s256).digest()
-        v = hmac.new(k, v, s256).digest()
-        k = hmac.new(k, v + b"\x01" + secret_bytes + z_bytes, s256).digest()
-        v = hmac.new(k, v, s256).digest()
+        z_bytes = z.to_bytes(SCALAR_BYTE_LENGTH, BYTE_ORDER)
+        secret_bytes = self.secret.to_bytes(SCALAR_BYTE_LENGTH, BYTE_ORDER)
+        k = hmac.new(k, v + b"\x00" + secret_bytes + z_bytes, _SHA256).digest()
+        v = hmac.new(k, v, _SHA256).digest()
+        k = hmac.new(k, v + b"\x01" + secret_bytes + z_bytes, _SHA256).digest()
+        v = hmac.new(k, v, _SHA256).digest()
         while True:
-            v = hmac.new(k, v, s256).digest()
-            candidate = int.from_bytes(v, "big")
+            v = hmac.new(k, v, _SHA256).digest()
+            candidate = int.from_bytes(v, BYTE_ORDER)
             if 1 <= candidate < N:
                 return candidate
-            k = hmac.new(k, v + b"\x00", s256).digest()
-            v = hmac.new(k, v, s256).digest()
+            k = hmac.new(k, v + b"\x00", _SHA256).digest()
+            v = hmac.new(k, v, _SHA256).digest()

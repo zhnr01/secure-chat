@@ -4,24 +4,16 @@ Every message on the wire is signed with the sender's ECDSA private key and
 verified with their certificate's public key, so a relay cannot forge or alter
 messages without detection.
 """
-import hashlib
-from typing import Union
-
 from ..crypto.ecc import PrivateKey, Signature, S256Point
+from ..crypto.hashing import sha256_int
 
 
-def hash_message(msg: Union[int, str]) -> int:
-    """Return SHA-256 of ``msg`` as an integer, suitable for ECDSA."""
-    if isinstance(msg, int):
-        msg_bytes = msg.to_bytes(32, "big")
-    elif isinstance(msg, str):
-        msg_bytes = msg.encode()
-    else:
-        raise TypeError("Message must be int or str")
-    return int.from_bytes(hashlib.sha256(msg_bytes).digest(), "big")
+def hash_message(message: str) -> int:
+    """Return SHA-256 of ``message`` as an integer, suitable for ECDSA."""
+    return sha256_int(message.encode())
 
 
-def create_signed_message(private_key: PrivateKey, message: Union[str, int]) -> dict:
+def create_signed_message(private_key: PrivateKey, message: str | int) -> dict:
     """Return a dict containing the message and its ECDSA signature (r, s).
 
     The message is normalized to its string form *before* hashing so that the
