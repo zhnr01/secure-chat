@@ -104,7 +104,7 @@ def encrypt(keys: SessionKeys, plaintext: bytes, *, nonce: bytes | None = None) 
         raise ValueError(f"nonce must be {NONCE_LEN} bytes")
 
     ks = _keystream(keys.enc_key, nonce, len(plaintext))
-    ciphertext = bytes(p ^ k for p, k in zip(plaintext, ks))
+    ciphertext = bytes(p ^ k for p, k in zip(plaintext, ks, strict=True))
     tag = hmac.new(keys.mac_key, nonce + ciphertext, _HASH).digest()
     return nonce + ciphertext + tag
 
@@ -132,7 +132,7 @@ def decrypt(keys: SessionKeys, sealed: bytes) -> bytes:
         raise AuthenticationError("message authentication failed")
 
     ks = _keystream(keys.enc_key, nonce, len(ciphertext))
-    return bytes(c ^ k for c, k in zip(ciphertext, ks))
+    return bytes(c ^ k for c, k in zip(ciphertext, ks, strict=True))
 
 
 def seal_text(keys: SessionKeys, plaintext: str) -> str:

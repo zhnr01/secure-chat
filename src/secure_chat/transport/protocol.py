@@ -10,7 +10,7 @@ Frame layout::
 """
 import json
 import struct
-from typing import Any, Optional
+from typing import Any
 
 # Reject absurd frame sizes early to avoid a malicious peer forcing a huge
 # allocation (a simple denial-of-service guard).
@@ -24,7 +24,7 @@ def send_json(sock, obj: Any) -> None:
     sock.sendall(header + data)
 
 
-def recv_json(sock) -> Optional[Any]:
+def recv_json(sock) -> Any | None:
     """Read exactly one framed JSON message. Returns None if the peer closed."""
     header = _recv_exact(sock, 4)
     if not header:
@@ -38,7 +38,7 @@ def recv_json(sock) -> Optional[Any]:
     return json.loads(payload.decode())
 
 
-def _recv_exact(sock, n: int) -> Optional[bytes]:
+def _recv_exact(sock, n: int) -> bytes | None:
     """Read exactly ``n`` bytes, or return None if the connection closes first."""
     buf = bytearray()
     while len(buf) < n:

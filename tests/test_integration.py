@@ -15,7 +15,6 @@ from secure_chat.crypto.ecc import N, PrivateKey
 from secure_chat.crypto.key_exchange import KeyExchange
 from secure_chat.crypto.rng import randint
 from secure_chat.pki.certificate_authority import Certificate, CertificateAuthority
-from secure_chat.server.app import Server
 from secure_chat.transport.messaging import create_signed_message, verify_message
 from secure_chat.transport.protocol import recv_json, send_json
 

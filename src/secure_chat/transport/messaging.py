@@ -4,7 +4,7 @@ Every message on the wire is signed with the sender's ECDSA private key and
 verified with their certificate's public key, so a relay cannot forge or alter
 messages without detection.
 """
-from ..crypto.ecc import PrivateKey, Signature, S256Point
+from ..crypto.ecc import PrivateKey, S256Point, Signature
 from ..crypto.hashing import sha256_int
 
 

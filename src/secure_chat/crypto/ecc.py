@@ -54,33 +54,33 @@ class FieldElement:
     def __ne__(self, other: object) -> bool:
         return not self == other
 
-    def _assert_same_field(self, other: "FieldElement") -> None:
+    def _assert_same_field(self, other: FieldElement) -> None:
         if self.prime != other.prime:
             raise TypeError("Cannot operate on numbers in different fields")
 
-    def __add__(self, other: "FieldElement") -> "FieldElement":
+    def __add__(self, other: FieldElement) -> FieldElement:
         self._assert_same_field(other)
         return self.__class__((self.num + other.num) % self.prime, self.prime)
 
-    def __sub__(self, other: "FieldElement") -> "FieldElement":
+    def __sub__(self, other: FieldElement) -> FieldElement:
         self._assert_same_field(other)
         return self.__class__((self.num - other.num) % self.prime, self.prime)
 
-    def __mul__(self, other: "FieldElement") -> "FieldElement":
+    def __mul__(self, other: FieldElement) -> FieldElement:
         self._assert_same_field(other)
         return self.__class__((self.num * other.num) % self.prime, self.prime)
 
-    def __pow__(self, exponent: int) -> "FieldElement":
+    def __pow__(self, exponent: int) -> FieldElement:
         n = exponent % (self.prime - 1)
         return self.__class__(pow(self.num, n, self.prime), self.prime)
 
-    def __truediv__(self, other: "FieldElement") -> "FieldElement":
+    def __truediv__(self, other: FieldElement) -> FieldElement:
         self._assert_same_field(other)
         # Division by Fermat's little theorem: a^-1 == a^(p-2) (mod p).
         inverse = pow(other.num, self.prime - 2, self.prime)
         return self.__class__((self.num * inverse) % self.prime, self.prime)
 
-    def __rmul__(self, coefficient: int) -> "FieldElement":
+    def __rmul__(self, coefficient: int) -> FieldElement:
         return self.__class__((self.num * coefficient) % self.prime, self.prime)
 
 
@@ -124,7 +124,7 @@ class Point:
     def _is_infinity(self) -> bool:
         return self.x is None
 
-    def __add__(self, other: "Point") -> "Point":
+    def __add__(self, other: Point) -> Point:
         if self.a != other.a or self.b != other.b:
             raise TypeError(f"Points {self}, {other} are not on the same curve")
 
@@ -155,7 +155,7 @@ class Point:
         y = slope * (self.x - x) - self.y
         return self.__class__(x, y, self.a, self.b)
 
-    def __rmul__(self, coefficient: int) -> "Point":
+    def __rmul__(self, coefficient: int) -> Point:
         # Double-and-add gives O(log n) scalar multiplication.
         coef = coefficient
         current = self
@@ -200,11 +200,11 @@ class S256Point(Point):
             return "S256Point(infinity)"
         return f"S256Point({self.x}, {self.y})"
 
-    def __rmul__(self, coefficient: int) -> "S256Point":
+    def __rmul__(self, coefficient: int) -> S256Point:
         # Reduce the scalar modulo the group order before multiplying.
         return super().__rmul__(coefficient % N)
 
-    def verify(self, z: int, sig: "Signature") -> bool:
+    def verify(self, z: int, sig: Signature) -> bool:
         """Return True if ``sig`` is a valid signature over hash ``z``."""
         s_inv = pow(sig.s, N - 2, N)
         u = z * s_inv % N

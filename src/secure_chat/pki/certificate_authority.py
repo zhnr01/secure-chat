@@ -9,7 +9,7 @@ import json
 from enum import Enum
 
 from ..crypto.constants import BYTE_ORDER, GROUP_ORDER, SCALAR_BYTE_LENGTH
-from ..crypto.ecc import PrivateKey, Signature, S256Point
+from ..crypto.ecc import PrivateKey, S256Point, Signature
 from ..crypto.hashing import sha256_int
 from ..crypto.rng import randint
 
@@ -57,7 +57,7 @@ class PEMHandler:
 
     @staticmethod
     def load(filename: str, label: PEMLabel) -> bytes:
-        with open(filename, "r") as f:
+        with open(filename) as f:
             pem_data = f.read()
         return PEMFormatter.decode(pem_data, label)
 

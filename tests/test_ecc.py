@@ -2,7 +2,7 @@
 import pytest
 
 from secure_chat.crypto.constants import GROUP_ORDER
-from secure_chat.crypto.ecc import G, N, FieldElement, PrivateKey, Signature, S256Field
+from secure_chat.crypto.ecc import FieldElement, G, N, PrivateKey, S256Field, Signature
 from secure_chat.crypto.rng import randint
 
 
