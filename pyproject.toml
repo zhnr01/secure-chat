@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "secure-chat"
+version = "1.0.0"
+description = "An end-to-end authenticated chat built on a from-scratch implementation of elliptic curve cryptography (secp256k1, ECDSA, a mini certificate authority, and Diffie-Hellman) — using only the Python standard library."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "zhnr01" }]
+keywords = ["cryptography", "ecc", "secp256k1", "ecdsa", "diffie-hellman", "chat"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Security :: Cryptography",
+]
+
+# Zero runtime dependencies. Everything is built on the Python standard library.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+secure-chat-server = "secure_chat.server.app:main"
+secure-chat-client = "secure_chat.client.cli:main"
+
+[project.urls]
+Repository = "https://github.com/zhnr01/secure-chat"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

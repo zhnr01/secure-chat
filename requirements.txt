@@ -1,1 +1,6 @@
-pyqt5==5.15.10
+# secure-chat has ZERO runtime dependencies — everything is built on the
+# Python standard library. This is intentional: the cryptography (ECC, ECDSA,
+# Diffie-Hellman, the message cipher) is all implemented from scratch.
+#
+# Development-only tooling:
+pytest>=7.0
